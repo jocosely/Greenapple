@@ -230,7 +230,6 @@ public sealed class NativeBridge
     private Process? locationProcess;
     private Process? tunnelProcess;
     private System.Threading.Timer? watchdogTimer;
-    private CancellationTokenSource? routeCancellation;
     private SpoofTarget? activeTarget;
     private string tunnelState = "DISCONNECTED";
     private int reconnectCount;
@@ -297,11 +296,10 @@ public sealed class NativeBridge
     {
         var target = payload.Deserialize<SpoofTarget>(JsonOptions()) ?? throw new InvalidOperationException("Missing location target.");
         Validate(target);
-        StopRouteRunner();
         activeTarget = target;
         SaveHeldLocation(target);
         tunnelState = "CONNECTING";
-        return await StartLocationProcess(target);
+        return await StartLocationProcess(target, stopExistingFirst: false);
     }
 
     public async Task<NativeResult> ResetLocation()
@@ -320,72 +318,59 @@ public sealed class NativeBridge
         var route = payload.Deserialize<RoutePayload>(JsonOptions()) ?? throw new InvalidOperationException("Missing route payload.");
         if (route.Points.Count < 2) return new NativeResult(false, Error: "Route needs at least two points.");
         foreach (var point in route.Points) Validate(point);
-        StopRouteRunner();
         ClearHeldLocation();
         await EnsureTunnel();
-        var first = route.Points[0];
-        activeTarget = first;
-        var firstResult = await StartLocationProcess(first, stopExistingFirst: false, readyAfter: TimeSpan.FromMilliseconds(900));
-        if (!firstResult.Ok) return firstResult;
-
-        var cancellation = new CancellationTokenSource();
-        routeCancellation = cancellation;
-        _ = Task.Run(async () => await RunRouteLoop(route, cancellation.Token), cancellation.Token);
+        var result = await StartRouteWorker(route);
+        if (!result.Ok) return result;
+        activeTarget = route.Points[^1];
+        SaveHeldLocation(route.Points[^1]);
         tunnelState = "SPOOFING";
         reconnectCount = 0;
         lastError = null;
         ScheduleWatchdog(2000);
-        return firstResult with { Stdout = "Route GPS session started." };
+        return result with { Stdout = string.IsNullOrWhiteSpace(result.Stdout) ? "Route GPS session started." : result.Stdout };
     }
 
-    private async Task RunRouteLoop(RoutePayload route, CancellationToken cancellationToken)
+    private async Task<NativeResult> StartRouteWorker(RoutePayload route)
     {
-        var totalMeters = Math.Max(1, RouteDistanceMeters(route.Points));
-        var metersPerSecond = Math.Max(1, route.SpeedKmh) / 3.6;
-        var started = DateTimeOffset.UtcNow;
-        var interval = TimeSpan.FromMilliseconds(1200);
-
-        while (!cancellationToken.IsCancellationRequested)
+        var oldProcess = locationProcess;
+        var endpoint = await GetRsdEndpoint();
+        if (endpoint is null) return new NativeResult(false, Error: "Wi-Fi developer tunnel is not ready.");
+        var workerPath = EnsureRouteWorkerScript();
+        var routePath = Path.Combine(Path.GetTempPath(), $"greenapple-route-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.json");
+        await File.WriteAllTextAsync(routePath, JsonSerializer.Serialize(route, JsonOptions()), Encoding.UTF8);
+        var args = new[] { workerPath, endpoint.Host, endpoint.Port.ToString(), routePath };
+        var start = new ProcessStartInfo(ResolvePython())
         {
-            var elapsed = (DateTimeOffset.UtcNow - started).TotalSeconds;
-            var targetMeters = Math.Min(totalMeters, elapsed * metersPerSecond);
-            var next = PointAtDistance(route.Points, targetMeters);
-            activeTarget = next;
-
-            var result = await StartLocationProcess(next, stopExistingFirst: false, readyAfter: TimeSpan.FromMilliseconds(800), ensureTunnelFirst: false);
-            if (!result.Ok)
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            WorkingDirectory = AppContext.BaseDirectory
+        };
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        var nextProcess = Process.Start(start);
+        if (nextProcess is null) return new NativeResult(false, Error: "Could not start iPhone route worker.");
+        var ready = await WaitForProcessReady(nextProcess, args, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(4), "GREENAPPLE_ROUTE_READY");
+        if (ready.Ok)
+        {
+            locationProcess = nextProcess;
+            if (oldProcess is not null && !ReferenceEquals(oldProcess, nextProcess))
             {
-                lastError = result.Error ?? "Route GPS update failed.";
-                tunnelState = "RECONNECTING";
-                await EnsureTunnel();
-                try
-                {
-                    await Task.Delay(1500, cancellationToken);
-                }
-                catch (TaskCanceledException)
-                {
-                    return;
-                }
-                continue;
+                StopProcess(oldProcess);
             }
-
-            if (targetMeters >= totalMeters)
-            {
-                activeTarget = route.Points[^1];
-                SaveHeldLocation(route.Points[^1]);
-                tunnelState = "SPOOFING";
-                return;
-            }
-
-            try
-            {
-                await Task.Delay(interval, cancellationToken);
-            }
-            catch (TaskCanceledException)
-            {
-                return;
-            }
+            tunnelState = "SPOOFING";
+            reconnectCount = 0;
+            lastError = null;
+            ScheduleWatchdog(2000);
         }
+        else
+        {
+            StopProcess(nextProcess);
+            if (locationProcess is null && oldProcess is not null && !oldProcess.HasExited) locationProcess = oldProcess;
+        }
+        return ready;
     }
 
     private async Task<bool> ResumePersistedLocationIfReady()
@@ -443,7 +428,7 @@ public sealed class NativeBridge
         return ready;
     }
 
-    private async Task<NativeResult> WaitForProcessReady(Process process, string[] args, TimeSpan timeout, TimeSpan readyAfter)
+    private async Task<NativeResult> WaitForProcessReady(Process process, string[] args, TimeSpan timeout, TimeSpan readyAfter, string? readyText = null)
     {
         var stdout = new StringBuilder();
         var stderr = new StringBuilder();
@@ -454,11 +439,15 @@ public sealed class NativeBridge
         var started = DateTime.UtcNow;
         while (!process.HasExited && DateTime.UtcNow - started < timeout)
         {
+            if (readyText is not null && stdout.ToString().Contains(readyText, StringComparison.OrdinalIgnoreCase))
+            {
+                return new NativeResult(true, Command: [ResolvePython(), .. args], Stdout: stdout.ToString(), Stderr: stderr.ToString());
+            }
             if (stdout.ToString().Contains("Press ENTER to exit>", StringComparison.OrdinalIgnoreCase))
             {
                 return new NativeResult(true, Command: [ResolvePython(), .. args], Stdout: stdout.ToString(), Stderr: stderr.ToString());
             }
-            if (DateTime.UtcNow - started >= readyAfter)
+            if (readyText is null && DateTime.UtcNow - started >= readyAfter)
             {
                 return new NativeResult(true, Command: [ResolvePython(), .. args], Stdout: stdout.ToString(), Stderr: stderr.ToString());
             }
@@ -633,9 +622,7 @@ public sealed class NativeBridge
 
     private void StopRouteRunner()
     {
-        routeCancellation?.Cancel();
-        routeCancellation?.Dispose();
-        routeCancellation = null;
+        StopLocationProcess();
     }
 
     private void StopTunnelProcess()
@@ -760,6 +747,102 @@ public sealed class NativeBridge
 
         return points[^1];
     }
+
+    private static string EnsureRouteWorkerScript()
+    {
+        var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Greenapple");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "greenapple_route_worker.py");
+        File.WriteAllText(path, RouteWorkerScript, Encoding.UTF8);
+        return path;
+    }
+
+    private const string RouteWorkerScript = """
+import asyncio
+import json
+import math
+import sys
+
+from pymobiledevice3.remote.remote_service_discovery import RemoteServiceDiscoveryService
+from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider
+from pymobiledevice3.services.dvt.instruments.location_simulation import LocationSimulation
+
+
+def distance_meters(a, b):
+    radius = 6371000
+    dlat = math.radians(b["lat"] - a["lat"])
+    dlng = math.radians(b["lng"] - a["lng"])
+    lat1 = math.radians(a["lat"])
+    lat2 = math.radians(b["lat"])
+    h = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlng / 2) ** 2
+    return 2 * radius * math.asin(math.sqrt(h))
+
+
+def route_distance(points):
+    return sum(distance_meters(points[i - 1], points[i]) for i in range(1, len(points)))
+
+
+def point_at_distance(points, target):
+    if len(points) == 1 or target <= 0:
+        return points[0]
+    traveled = 0
+    for i in range(1, len(points)):
+        start = points[i - 1]
+        end = points[i]
+        segment = distance_meters(start, end)
+        if traveled + segment >= target:
+            progress = 1 if segment <= 0 else (target - traveled) / segment
+            return {
+                "lat": start["lat"] + (end["lat"] - start["lat"]) * progress,
+                "lng": start["lng"] + (end["lng"] - start["lng"]) * progress,
+                "name": end.get("name") if target >= route_distance(points) else start.get("name"),
+            }
+        traveled += segment
+    return points[-1]
+
+
+async def main():
+    if len(sys.argv) != 4:
+        print("Usage: greenapple_route_worker.py HOST PORT ROUTE_JSON", file=sys.stderr, flush=True)
+        return 2
+    host = sys.argv[1]
+    port = int(sys.argv[2])
+    route_path = sys.argv[3]
+    with open(route_path, "r", encoding="utf-8") as f:
+        route = json.load(f)
+    points = route["points"]
+    speed_kmh = max(1, float(route.get("speedKmh", 1)))
+    total = max(1, route_distance(points))
+    meters_per_second = speed_kmh / 3.6
+
+    rsd = RemoteServiceDiscoveryService((host, port))
+    await rsd.connect()
+    async with DvtProvider(rsd) as dvt, LocationSimulation(dvt) as location:
+        started = asyncio.get_running_loop().time()
+        ready = False
+        while True:
+            elapsed = asyncio.get_running_loop().time() - started
+            target = min(total, elapsed * meters_per_second)
+            point = point_at_distance(points, target)
+            await location.set(point["lat"], point["lng"])
+            if not ready:
+                print("GREENAPPLE_ROUTE_READY", flush=True)
+                ready = True
+            if target >= total:
+                print("GREENAPPLE_ROUTE_DONE", flush=True)
+                break
+            await asyncio.sleep(1.0)
+
+        # Keep this DVT session open so iOS continues holding the final simulated location.
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, sys.stdin.readline)
+    await rsd.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(main()))
+""";
 }
 
 public sealed record SpoofTarget(double Lng, double Lat, string? Name);
