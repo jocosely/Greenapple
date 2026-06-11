@@ -320,6 +320,10 @@ public sealed class NativeBridge
         foreach (var point in route.Points) Validate(point);
         ClearHeldLocation();
         await EnsureTunnel();
+        var first = route.Points[0];
+        activeTarget = first;
+        var prime = await StartLocationProcess(first, stopExistingFirst: false, ensureTunnelFirst: false);
+        if (!prime.Ok) return prime;
         var result = await StartRouteWorker(route);
         if (!result.Ok) return result;
         activeTarget = route.Points[^1];
