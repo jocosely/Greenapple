@@ -1,7 +1,7 @@
 import maplibregl, { GeoJSONSource, Map } from "maplibre-gl";
 import { useEffect, useRef } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { spoofIOSLocation } from "../spoof/iOS";
+import { spoofIOSLocation, spoofIOSRoute } from "../spoof/iOS";
 import { useGhostStore } from "../store/useGhostStore";
 import { GhostMarker } from "./GhostMarker";
 
@@ -143,6 +143,25 @@ function pointAtDistance(points: [number, number][], targetMeters: number): [num
   }
 
   return points[points.length - 1];
+}
+
+function routeFromDistance(points: [number, number][], targetMeters: number): [number, number][] {
+  if (points.length < 2 || targetMeters <= 0) return points;
+
+  let traveled = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const segmentStart = points[index - 1];
+    const segmentEnd = points[index];
+    const segmentMeters = haversineMeters(segmentStart, segmentEnd);
+    if (traveled + segmentMeters >= targetMeters) {
+      const segmentProgress = segmentMeters === 0 ? 1 : (targetMeters - traveled) / segmentMeters;
+      const current = interpolatePoint(segmentStart, segmentEnd, segmentProgress);
+      return [current, ...points.slice(index)];
+    }
+    traveled += segmentMeters;
+  }
+
+  return [points[points.length - 1]];
 }
 
 type DrivingRoute = {
@@ -376,11 +395,22 @@ export function MapView() {
     const startProgress = Math.max(0, Math.min(0.98, useGhostStore.getState().routeProgress));
     const end = points[points.length - 1];
     const movingLabel = currentTravelMode === "Boat" ? "Boating" : "Driving";
-    const startPoint = pointAtDistance(points, distance * startProgress);
+    const startMeters = distance * startProgress;
+    const startPoint = pointAtDistance(points, startMeters);
+    const routePoints = routeFromDistance(points, startMeters);
     naturalProgress.current = startProgress;
     await useGhostStore.getState().setCoords(startPoint, movingLabel);
-    useGhostStore.setState({ spoofStatus: `${movingLabel} route at ${currentSpeedKmh} km/h` });
-    void pushRouteGps(startPoint, movingLabel, true);
+    useGhostStore.setState({ spoofStatus: `Starting ${movingLabel.toLowerCase()} GPS route at ${currentSpeedKmh} km/h` });
+    try {
+      await spoofIOSRoute(
+        routePoints.map((point) => ({ lng: point[0], lat: point[1], name: movingLabel })),
+        currentSpeedKmh
+      );
+      useGhostStore.setState({ spoofStatus: `${movingLabel} GPS route active at ${currentSpeedKmh} km/h` });
+    } catch (error) {
+      useGhostStore.setState({ spoofStatus: error instanceof Error ? error.message : "Route GPS start failed" });
+      return;
+    }
 
     const started = performance.now() - visualDurationMs * startProgress;
     const frame = async (now: number) => {
@@ -403,7 +433,6 @@ export function MapView() {
       });
       useGhostStore.setState({ coords: next, cityName: progress >= 1 ? "Route End" : movingLabel });
       useGhostStore.getState().setRouteProgress(progress);
-      void pushRouteGps(next, progress >= 1 ? "Route End" : movingLabel, progress >= 1);
 
       if (progress < 1) {
         routeAnimation.current = window.requestAnimationFrame(frame);
@@ -421,6 +450,7 @@ export function MapView() {
       useGhostStore.getState().setRouteProgress(0);
       const endName = await reverseGeocode(end);
       useGhostStore.getState().renameCurrentLocation(endName);
+      void pushRouteGps(end, endName, true);
       const store = useGhostStore.getState();
       if (store.arrivalAction === "Reset") {
         const seconds = store.arrivalReturnSeconds;

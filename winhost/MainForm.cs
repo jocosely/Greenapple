@@ -228,6 +228,7 @@ public sealed class NativeBridge
     private readonly Form owner;
     private readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(3) };
     private Process? locationProcess;
+    private Process? routeProcess;
     private System.Threading.Timer? watchdogTimer;
     private SpoofTarget? activeTarget;
     private string tunnelState = "DISCONNECTED";
@@ -244,6 +245,7 @@ public sealed class NativeBridge
         watchdogTimer?.Dispose();
         watchdogTimer = null;
         StopLocationProcess();
+        StopRouteProcess();
         if (clearPersisted) ClearHeldLocation();
     }
 
@@ -293,6 +295,7 @@ public sealed class NativeBridge
     {
         var target = payload.Deserialize<SpoofTarget>(JsonOptions()) ?? throw new InvalidOperationException("Missing location target.");
         Validate(target);
+        StopRouteProcess();
         activeTarget = target;
         SaveHeldLocation(target);
         tunnelState = "CONNECTING";
@@ -314,12 +317,38 @@ public sealed class NativeBridge
     {
         var route = payload.Deserialize<RoutePayload>(JsonOptions()) ?? throw new InvalidOperationException("Missing route payload.");
         if (route.Points.Count < 2) return new NativeResult(false, Error: "Route needs at least two points.");
+        foreach (var point in route.Points) Validate(point);
+        StopLocationProcess();
+        StopRouteProcess();
+        activeTarget = null;
+        ClearHeldLocation();
+        await EnsureTunnel();
         var gpx = Path.Combine(Path.GetTempPath(), $"greenapple-route-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.gpx");
         await File.WriteAllTextAsync(gpx, BuildGpx(route), Encoding.UTF8);
         var endpoint = await GetRsdEndpoint();
         if (endpoint is null) return new NativeResult(false, Error: "Wi-Fi developer tunnel is not ready.");
-        var result = await RunPython(["-m", "pymobiledevice3", "developer", "dvt", "simulate-location", "play", "--rsd", endpoint.Host, endpoint.Port.ToString(), gpx], TimeSpan.FromSeconds(90));
-        return result;
+        var args = new[] { "-m", "pymobiledevice3", "developer", "dvt", "simulate-location", "play", "--rsd", endpoint.Host, endpoint.Port.ToString(), gpx };
+        var start = new ProcessStartInfo(ResolvePython())
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            WorkingDirectory = AppContext.BaseDirectory
+        };
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        routeProcess = Process.Start(start);
+        if (routeProcess is null) return new NativeResult(false, Error: "Could not start iPhone route process.");
+        var ready = await WaitForProcessReady(routeProcess, args, TimeSpan.FromSeconds(20));
+        if (ready.Ok)
+        {
+            tunnelState = "SPOOFING";
+            reconnectCount = 0;
+            lastError = null;
+            ScheduleWatchdog(2000);
+        }
+        return ready;
     }
 
     private async Task<bool> ResumePersistedLocationIfReady()
@@ -395,7 +424,7 @@ public sealed class NativeBridge
 
     private async Task WatchdogTick()
     {
-        if (activeTarget is null) return;
+        if (activeTarget is null && routeProcess is null) return;
         var ready = await CanUseDeveloperTunnel();
         if (!ready)
         {
@@ -403,12 +432,27 @@ public sealed class NativeBridge
             tunnelState = "RECONNECTING";
             lastError = "Tunnel dropped. Waiting for iPhone to wake or network to reconnect.";
             StopLocationProcess();
+            StopRouteProcess();
             await EnsureTunnel();
             ScheduleWatchdog(2000);
             return;
         }
 
-        if (locationProcess is null || locationProcess.HasExited || tunnelState is "RECONNECTING" or "CONNECTING")
+        if (routeProcess is not null && !routeProcess.HasExited)
+        {
+            tunnelState = "SPOOFING";
+            ScheduleWatchdog(2000);
+            return;
+        }
+
+        if (routeProcess is not null && routeProcess.HasExited)
+        {
+            StopRouteProcess();
+            tunnelState = "CONNECTED";
+            return;
+        }
+
+        if (activeTarget is not null && (locationProcess is null || locationProcess.HasExited || tunnelState is "RECONNECTING" or "CONNECTING"))
         {
             await StartLocationProcess(activeTarget);
             return;
@@ -540,6 +584,30 @@ public sealed class NativeBridge
         }
     }
 
+    private void StopRouteProcess()
+    {
+        if (routeProcess is null) return;
+        try
+        {
+            if (!routeProcess.HasExited)
+            {
+                try
+                {
+                    routeProcess.StandardInput.WriteLine();
+                    routeProcess.StandardInput.Flush();
+                }
+                catch { }
+                if (!routeProcess.WaitForExit(1200)) routeProcess.Kill(entireProcessTree: true);
+            }
+        }
+        catch { }
+        finally
+        {
+            routeProcess.Dispose();
+            routeProcess = null;
+        }
+    }
+
     private string HeldLocationFile => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Greenapple", "held-location.json");
     private void SaveHeldLocation(SpoofTarget target)
     {
@@ -588,19 +656,42 @@ public sealed class NativeBridge
     private static string BuildGpx(RoutePayload route)
     {
         var now = DateTimeOffset.UtcNow;
-        var seconds = Math.Max(3, (int)Math.Round(3600.0 / Math.Max(1, route.SpeedKmh)));
-        var points = route.Points.Select((p, i) => $"    <trkpt lat=\"{p.Lat:F7}\" lon=\"{p.Lng:F7}\"><time>{now.AddSeconds(i * seconds):O}</time></trkpt>");
+        var metersPerSecond = Math.Max(1, route.SpeedKmh) / 3.6;
+        var elapsedSeconds = 0.0;
+        var lines = new List<string>();
+        for (var i = 0; i < route.Points.Count; i++)
+        {
+            if (i > 0)
+            {
+                elapsedSeconds += DistanceMeters(route.Points[i - 1], route.Points[i]) / metersPerSecond;
+            }
+            var point = route.Points[i];
+            lines.Add($"    <trkpt lat=\"{point.Lat:F7}\" lon=\"{point.Lng:F7}\"><time>{now.AddSeconds(elapsedSeconds):O}</time></trkpt>");
+        }
         return $"""
 <?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Greenapple" xmlns="http://www.topografix.com/GPX/1/1">
   <trk>
     <name>Greenapple Route</name>
     <trkseg>
-{string.Join("\n", points)}
+{string.Join("\n", lines)}
     </trkseg>
   </trk>
 </gpx>
 """;
+    }
+
+    private static double DistanceMeters(SpoofTarget a, SpoofTarget b)
+    {
+        const double radius = 6371000;
+        static double ToRad(double value) => value * Math.PI / 180.0;
+        var dLat = ToRad(b.Lat - a.Lat);
+        var dLng = ToRad(b.Lng - a.Lng);
+        var lat1 = ToRad(a.Lat);
+        var lat2 = ToRad(b.Lat);
+        var h = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
+                Math.Cos(lat1) * Math.Cos(lat2) * Math.Sin(dLng / 2) * Math.Sin(dLng / 2);
+        return 2 * radius * Math.Asin(Math.Sqrt(h));
     }
 }
 
