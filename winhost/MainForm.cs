@@ -228,8 +228,9 @@ public sealed class NativeBridge
     private readonly Form owner;
     private readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(3) };
     private Process? locationProcess;
-    private Process? routeProcess;
+    private Process? tunnelProcess;
     private System.Threading.Timer? watchdogTimer;
+    private CancellationTokenSource? routeCancellation;
     private SpoofTarget? activeTarget;
     private string tunnelState = "DISCONNECTED";
     private int reconnectCount;
@@ -244,8 +245,9 @@ public sealed class NativeBridge
     {
         watchdogTimer?.Dispose();
         watchdogTimer = null;
+        StopRouteRunner();
         StopLocationProcess();
-        StopRouteProcess();
+        StopTunnelProcess();
         if (clearPersisted) ClearHeldLocation();
     }
 
@@ -295,7 +297,7 @@ public sealed class NativeBridge
     {
         var target = payload.Deserialize<SpoofTarget>(JsonOptions()) ?? throw new InvalidOperationException("Missing location target.");
         Validate(target);
-        StopRouteProcess();
+        StopRouteRunner();
         activeTarget = target;
         SaveHeldLocation(target);
         tunnelState = "CONNECTING";
@@ -318,37 +320,72 @@ public sealed class NativeBridge
         var route = payload.Deserialize<RoutePayload>(JsonOptions()) ?? throw new InvalidOperationException("Missing route payload.");
         if (route.Points.Count < 2) return new NativeResult(false, Error: "Route needs at least two points.");
         foreach (var point in route.Points) Validate(point);
-        StopLocationProcess();
-        StopRouteProcess();
-        activeTarget = null;
+        StopRouteRunner();
         ClearHeldLocation();
         await EnsureTunnel();
-        var gpx = Path.Combine(Path.GetTempPath(), $"greenapple-route-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.gpx");
-        await File.WriteAllTextAsync(gpx, BuildGpx(route), Encoding.UTF8);
-        var endpoint = await GetRsdEndpoint();
-        if (endpoint is null) return new NativeResult(false, Error: "Wi-Fi developer tunnel is not ready.");
-        var args = new[] { "-m", "pymobiledevice3", "developer", "dvt", "simulate-location", "play", "--rsd", endpoint.Host, endpoint.Port.ToString(), gpx };
-        var start = new ProcessStartInfo(ResolvePython())
+        var first = route.Points[0];
+        activeTarget = first;
+        var firstResult = await StartLocationProcess(first, stopExistingFirst: false, readyAfter: TimeSpan.FromMilliseconds(900));
+        if (!firstResult.Ok) return firstResult;
+
+        var cancellation = new CancellationTokenSource();
+        routeCancellation = cancellation;
+        _ = Task.Run(async () => await RunRouteLoop(route, cancellation.Token), cancellation.Token);
+        tunnelState = "SPOOFING";
+        reconnectCount = 0;
+        lastError = null;
+        ScheduleWatchdog(2000);
+        return firstResult with { Stdout = "Route GPS session started." };
+    }
+
+    private async Task RunRouteLoop(RoutePayload route, CancellationToken cancellationToken)
+    {
+        var totalMeters = Math.Max(1, RouteDistanceMeters(route.Points));
+        var metersPerSecond = Math.Max(1, route.SpeedKmh) / 3.6;
+        var started = DateTimeOffset.UtcNow;
+        var interval = TimeSpan.FromMilliseconds(1200);
+
+        while (!cancellationToken.IsCancellationRequested)
         {
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-            WorkingDirectory = AppContext.BaseDirectory
-        };
-        foreach (var arg in args) start.ArgumentList.Add(arg);
-        routeProcess = Process.Start(start);
-        if (routeProcess is null) return new NativeResult(false, Error: "Could not start iPhone route process.");
-        var ready = await WaitForProcessReady(routeProcess, args, TimeSpan.FromSeconds(20));
-        if (ready.Ok)
-        {
-            tunnelState = "SPOOFING";
-            reconnectCount = 0;
-            lastError = null;
-            ScheduleWatchdog(2000);
+            var elapsed = (DateTimeOffset.UtcNow - started).TotalSeconds;
+            var targetMeters = Math.Min(totalMeters, elapsed * metersPerSecond);
+            var next = PointAtDistance(route.Points, targetMeters);
+            activeTarget = next;
+
+            var result = await StartLocationProcess(next, stopExistingFirst: false, readyAfter: TimeSpan.FromMilliseconds(800), ensureTunnelFirst: false);
+            if (!result.Ok)
+            {
+                lastError = result.Error ?? "Route GPS update failed.";
+                tunnelState = "RECONNECTING";
+                await EnsureTunnel();
+                try
+                {
+                    await Task.Delay(1500, cancellationToken);
+                }
+                catch (TaskCanceledException)
+                {
+                    return;
+                }
+                continue;
+            }
+
+            if (targetMeters >= totalMeters)
+            {
+                activeTarget = route.Points[^1];
+                SaveHeldLocation(route.Points[^1]);
+                tunnelState = "SPOOFING";
+                return;
+            }
+
+            try
+            {
+                await Task.Delay(interval, cancellationToken);
+            }
+            catch (TaskCanceledException)
+            {
+                return;
+            }
         }
-        return ready;
     }
 
     private async Task<bool> ResumePersistedLocationIfReady()
@@ -361,10 +398,15 @@ public sealed class NativeBridge
         return result.Ok;
     }
 
-    private async Task<NativeResult> StartLocationProcess(SpoofTarget target)
+    private async Task<NativeResult> StartLocationProcess(SpoofTarget target, bool stopExistingFirst = true, TimeSpan? readyAfter = null, bool ensureTunnelFirst = true)
     {
-        StopLocationProcess();
-        await EnsureTunnel();
+        var oldProcess = locationProcess;
+        if (stopExistingFirst)
+        {
+            StopLocationProcess();
+            oldProcess = null;
+        }
+        if (ensureTunnelFirst) await EnsureTunnel();
         var endpoint = await GetRsdEndpoint();
         if (endpoint is null) return new NativeResult(false, Error: "Wi-Fi developer tunnel is not ready.");
         var args = new[] { "-m", "pymobiledevice3", "developer", "dvt", "simulate-location", "set", "--rsd", endpoint.Host, endpoint.Port.ToString(), "--", target.Lat.ToString("F7"), target.Lng.ToString("F7") };
@@ -378,20 +420,30 @@ public sealed class NativeBridge
             WorkingDirectory = AppContext.BaseDirectory
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
-        locationProcess = Process.Start(start);
-        if (locationProcess is null) return new NativeResult(false, Error: "Could not start iPhone location process.");
-        var ready = await WaitForProcessReady(locationProcess, args, TimeSpan.FromSeconds(60));
+        var nextProcess = Process.Start(start);
+        if (nextProcess is null) return new NativeResult(false, Error: "Could not start iPhone location process.");
+        var ready = await WaitForProcessReady(nextProcess, args, TimeSpan.FromSeconds(60), readyAfter ?? TimeSpan.FromSeconds(3));
         if (ready.Ok)
         {
+            locationProcess = nextProcess;
+            if (oldProcess is not null && !ReferenceEquals(oldProcess, nextProcess))
+            {
+                StopProcess(oldProcess);
+            }
             tunnelState = "SPOOFING";
             reconnectCount = 0;
             lastError = null;
             ScheduleWatchdog(2000);
         }
+        else
+        {
+            StopProcess(nextProcess);
+            if (locationProcess is null && oldProcess is not null && !oldProcess.HasExited) locationProcess = oldProcess;
+        }
         return ready;
     }
 
-    private async Task<NativeResult> WaitForProcessReady(Process process, string[] args, TimeSpan timeout)
+    private async Task<NativeResult> WaitForProcessReady(Process process, string[] args, TimeSpan timeout, TimeSpan readyAfter)
     {
         var stdout = new StringBuilder();
         var stderr = new StringBuilder();
@@ -406,7 +458,7 @@ public sealed class NativeBridge
             {
                 return new NativeResult(true, Command: [ResolvePython(), .. args], Stdout: stdout.ToString(), Stderr: stderr.ToString());
             }
-            if (DateTime.UtcNow - started >= TimeSpan.FromSeconds(3))
+            if (DateTime.UtcNow - started >= readyAfter)
             {
                 return new NativeResult(true, Command: [ResolvePython(), .. args], Stdout: stdout.ToString(), Stderr: stderr.ToString());
             }
@@ -424,7 +476,7 @@ public sealed class NativeBridge
 
     private async Task WatchdogTick()
     {
-        if (activeTarget is null && routeProcess is null) return;
+        if (activeTarget is null) return;
         var ready = await CanUseDeveloperTunnel();
         if (!ready)
         {
@@ -432,23 +484,8 @@ public sealed class NativeBridge
             tunnelState = "RECONNECTING";
             lastError = "Tunnel dropped. Waiting for iPhone to wake or network to reconnect.";
             StopLocationProcess();
-            StopRouteProcess();
             await EnsureTunnel();
             ScheduleWatchdog(2000);
-            return;
-        }
-
-        if (routeProcess is not null && !routeProcess.HasExited)
-        {
-            tunnelState = "SPOOFING";
-            ScheduleWatchdog(2000);
-            return;
-        }
-
-        if (routeProcess is not null && routeProcess.HasExited)
-        {
-            StopRouteProcess();
-            tunnelState = "CONNECTED";
             return;
         }
 
@@ -465,7 +502,7 @@ public sealed class NativeBridge
     private async Task EnsureTunnel()
     {
         if (await CanUseDeveloperTunnel()) return;
-        StartTunneldElevated();
+        StartTunneld();
         for (var i = 0; i < 20; i++)
         {
             await Task.Delay(1000);
@@ -473,17 +510,40 @@ public sealed class NativeBridge
         }
     }
 
-    private void StartTunneldElevated()
+    private void StartTunneld()
     {
+        if (tunnelProcess is not null && !tunnelProcess.HasExited) return;
         var python = ResolvePython();
         var logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Greenapple", "tunneld.log");
         Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
-        var command = $"& '{python.Replace("'", "''")}' -m pymobiledevice3 remote tunneld --protocol tcp --host 127.0.0.1 --port {TunnelPort} *> '{logPath.Replace("'", "''")}'";
-        Process.Start(new ProcessStartInfo("powershell.exe", $"-NoProfile -ExecutionPolicy Bypass -Command \"Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-Command','{command.Replace("'", "''")}' -Verb RunAs -WindowStyle Hidden\"")
+        var start = new ProcessStartInfo(python)
         {
             UseShellExecute = false,
-            CreateNoWindow = true
-        });
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            WorkingDirectory = AppContext.BaseDirectory
+        };
+        foreach (var arg in new[] { "-m", "pymobiledevice3", "remote", "tunneld", "--protocol", "tcp", "--host", "127.0.0.1", "--port", TunnelPort.ToString() })
+        {
+            start.ArgumentList.Add(arg);
+        }
+        tunnelProcess = Process.Start(start);
+        if (tunnelProcess is null) return;
+        tunnelProcess.OutputDataReceived += (_, e) => AppendTunnelLog(logPath, e.Data);
+        tunnelProcess.ErrorDataReceived += (_, e) => AppendTunnelLog(logPath, e.Data);
+        tunnelProcess.BeginOutputReadLine();
+        tunnelProcess.BeginErrorReadLine();
+    }
+
+    private static void AppendTunnelLog(string logPath, string? line)
+    {
+        if (string.IsNullOrWhiteSpace(line)) return;
+        try
+        {
+            File.AppendAllText(logPath, $"[{DateTimeOffset.Now:O}] {line}{Environment.NewLine}");
+        }
+        catch { }
     }
 
     private async Task<bool> CanUseDeveloperTunnel()
@@ -567,44 +627,43 @@ public sealed class NativeBridge
     private void StopLocationProcess()
     {
         if (locationProcess is null) return;
-        try
-        {
-            if (!locationProcess.HasExited)
-            {
-                locationProcess.StandardInput.WriteLine();
-                locationProcess.StandardInput.Flush();
-                if (!locationProcess.WaitForExit(1200)) locationProcess.Kill();
-            }
-        }
-        catch { }
-        finally
-        {
-            locationProcess.Dispose();
-            locationProcess = null;
-        }
+        StopProcess(locationProcess);
+        locationProcess = null;
     }
 
-    private void StopRouteProcess()
+    private void StopRouteRunner()
     {
-        if (routeProcess is null) return;
+        routeCancellation?.Cancel();
+        routeCancellation?.Dispose();
+        routeCancellation = null;
+    }
+
+    private void StopTunnelProcess()
+    {
+        if (tunnelProcess is null) return;
+        StopProcess(tunnelProcess);
+        tunnelProcess = null;
+    }
+
+    private static void StopProcess(Process process)
+    {
         try
         {
-            if (!routeProcess.HasExited)
+            if (!process.HasExited)
             {
                 try
                 {
-                    routeProcess.StandardInput.WriteLine();
-                    routeProcess.StandardInput.Flush();
+                    process.StandardInput.WriteLine();
+                    process.StandardInput.Flush();
                 }
                 catch { }
-                if (!routeProcess.WaitForExit(1200)) routeProcess.Kill(entireProcessTree: true);
+                if (!process.WaitForExit(1200)) process.Kill(entireProcessTree: true);
             }
         }
         catch { }
         finally
         {
-            routeProcess.Dispose();
-            routeProcess = null;
+            process.Dispose();
         }
     }
 
@@ -653,34 +712,6 @@ public sealed class NativeBridge
         catch { }
         return "iPhone";
     }
-    private static string BuildGpx(RoutePayload route)
-    {
-        var now = DateTimeOffset.UtcNow;
-        var metersPerSecond = Math.Max(1, route.SpeedKmh) / 3.6;
-        var elapsedSeconds = 0.0;
-        var lines = new List<string>();
-        for (var i = 0; i < route.Points.Count; i++)
-        {
-            if (i > 0)
-            {
-                elapsedSeconds += DistanceMeters(route.Points[i - 1], route.Points[i]) / metersPerSecond;
-            }
-            var point = route.Points[i];
-            lines.Add($"    <trkpt lat=\"{point.Lat:F7}\" lon=\"{point.Lng:F7}\"><time>{now.AddSeconds(elapsedSeconds):O}</time></trkpt>");
-        }
-        return $"""
-<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="Greenapple" xmlns="http://www.topografix.com/GPX/1/1">
-  <trk>
-    <name>Greenapple Route</name>
-    <trkseg>
-{string.Join("\n", lines)}
-    </trkseg>
-  </trk>
-</gpx>
-""";
-    }
-
     private static double DistanceMeters(SpoofTarget a, SpoofTarget b)
     {
         const double radius = 6371000;
@@ -692,6 +723,42 @@ public sealed class NativeBridge
         var h = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
                 Math.Cos(lat1) * Math.Cos(lat2) * Math.Sin(dLng / 2) * Math.Sin(dLng / 2);
         return 2 * radius * Math.Asin(Math.Sqrt(h));
+    }
+
+    private static double RouteDistanceMeters(IReadOnlyList<SpoofTarget> points)
+    {
+        var total = 0.0;
+        for (var i = 1; i < points.Count; i++)
+        {
+            total += DistanceMeters(points[i - 1], points[i]);
+        }
+        return total;
+    }
+
+    private static SpoofTarget PointAtDistance(IReadOnlyList<SpoofTarget> points, double targetMeters)
+    {
+        if (points.Count == 0) return new SpoofTarget(-112.074, 33.4484, "Route");
+        if (points.Count == 1 || targetMeters <= 0) return points[0];
+
+        var traveled = 0.0;
+        for (var i = 1; i < points.Count; i++)
+        {
+            var start = points[i - 1];
+            var end = points[i];
+            var segmentMeters = DistanceMeters(start, end);
+            if (traveled + segmentMeters >= targetMeters)
+            {
+                var progress = segmentMeters <= 0 ? 1 : (targetMeters - traveled) / segmentMeters;
+                return new SpoofTarget(
+                    start.Lng + (end.Lng - start.Lng) * progress,
+                    start.Lat + (end.Lat - start.Lat) * progress,
+                    targetMeters >= RouteDistanceMeters(points) ? end.Name : start.Name
+                );
+            }
+            traveled += segmentMeters;
+        }
+
+        return points[^1];
     }
 }
 
