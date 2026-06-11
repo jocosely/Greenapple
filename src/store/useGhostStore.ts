@@ -58,6 +58,7 @@ type GhostState = {
   recent: GhostLocation[];
   route: [number, number][];
   routeRunning: boolean;
+  routeDone: boolean;
   themeColors: ThemeColors;
   setCoords: (coords: [number, number], name?: string) => Promise<void>;
   applyCurrentLocation: () => Promise<void>;
@@ -92,6 +93,7 @@ type GhostState = {
   addRoutePoint: (coords: [number, number]) => void;
   setRoute: (route: [number, number][]) => void;
   setRouteRunning: (running: boolean) => void;
+  setRouteDone: (done: boolean) => void;
   clearRoute: () => void;
   saveCurrent: () => void;
   addRecent: (location: GhostLocation) => void;
@@ -197,6 +199,7 @@ export const useGhostStore = create<GhostState>((set, get) => ({
   recent: readLocations(recentKey),
   route: [],
   routeRunning: false,
+  routeDone: false,
   themeColors: readThemeColors(),
   setCoords: async (coords, name = "Phoenix") => {
     set({ coords, cityName: name, spoofStatus: "Location ready" });
@@ -229,6 +232,7 @@ export const useGhostStore = create<GhostState>((set, get) => ({
       mode,
       route: [],
       routeRunning: false,
+      routeDone: false,
       routePaused: false,
       routeProgress: 0,
       patrolRunning: false,
@@ -260,6 +264,7 @@ export const useGhostStore = create<GhostState>((set, get) => ({
       routeTravelMode,
       route: [],
       routeRunning: false,
+      routeDone: false,
       routePaused: false,
       routeProgress: 0,
       spoofStatus: `${routeTravelMode} route mode`
@@ -277,8 +282,8 @@ export const useGhostStore = create<GhostState>((set, get) => ({
     const patrolPoints = [...get().patrolPoints, coords];
     set({ patrolPoints, coords, cityName: `Patrol ${patrolPoints.length}`, spoofStatus: "Patrol point added" });
   },
-  clearPatrol: () => set({ patrolPoints: [], patrolRunning: false, route: [], routeRunning: false, routePaused: false, routeProgress: 0 }),
-  setPatrolRunning: (patrolRunning) => set({ patrolRunning, routeRunning: patrolRunning, routePaused: false }),
+  clearPatrol: () => set({ patrolPoints: [], patrolRunning: false, route: [], routeRunning: false, routeDone: false, routePaused: false, routeProgress: 0 }),
+  setPatrolRunning: (patrolRunning) => set({ patrolRunning, routeRunning: patrolRunning, routeDone: false, routePaused: false }),
   addFavoriteSlot: () => {
     const current = locationFrom(get().coords, get().cityName || "Favorite");
     const favoriteSlots = [current, ...get().favoriteSlots].slice(0, 8);
@@ -330,11 +335,12 @@ export const useGhostStore = create<GhostState>((set, get) => ({
   setConnectionHealth: (connectionHealth) => set({ connectionHealth }),
   addRoutePoint: (coords) => {
     const next = [...get().route, coords].slice(-2);
-    set({ route: next, coords, cityName: next.length === 1 ? "Route Start" : "Route Ready" });
+    set({ route: next, routeDone: false, coords, cityName: next.length === 1 ? "Route Start" : "Route Ready" });
   },
-  setRoute: (route) => set({ route }),
-  setRouteRunning: (routeRunning) => set({ routeRunning, routePaused: false }),
-  clearRoute: () => set({ route: [], routeRunning: false, routePaused: false, routeProgress: 0, patrolRunning: false }),
+  setRoute: (route) => set({ route, routeDone: false }),
+  setRouteRunning: (routeRunning) => set({ routeRunning, routeDone: false, routePaused: false }),
+  setRouteDone: (routeDone) => set({ routeDone }),
+  clearRoute: () => set({ route: [], routeRunning: false, routeDone: false, routePaused: false, routeProgress: 0, patrolRunning: false }),
   saveCurrent: () => {
     const current = locationFrom(get().coords, get().cityName);
     const saved = [current, ...get().saved];

@@ -342,7 +342,7 @@ export function MapView() {
   async function prepareDrivingRoute(start: [number, number], end: [number, number]) {
     stopRouteAnimation();
     const store = useGhostStore.getState();
-    store.setRouteRunning(false);
+    useGhostStore.setState({ routeRunning: false, routeDone: false, routePaused: false });
     store.setRoute([]);
     store.renameCurrentLocation("Building route...");
     useGhostStore.setState({ spoofStatus: "Finding real road route..." });
@@ -368,7 +368,7 @@ export function MapView() {
   async function prepareBoatRoute(start: [number, number], end: [number, number]) {
     stopRouteAnimation();
     const store = useGhostStore.getState();
-    store.setRouteRunning(false);
+    useGhostStore.setState({ routeRunning: false, routeDone: false, routePaused: false });
     store.setRoute([start, end]);
     updateRouteStats([start, end]);
     await store.setCoords(start, "Boat Start");
@@ -378,7 +378,7 @@ export function MapView() {
   async function prepareOffRoadRoute(start: [number, number], end: [number, number]) {
     stopRouteAnimation();
     const store = useGhostStore.getState();
-    store.setRouteRunning(false);
+    useGhostStore.setState({ routeRunning: false, routeDone: false, routePaused: false });
     store.setRoute([start, end]);
     updateRouteStats([start, end]);
     await store.setCoords(start, "Route Start");
@@ -447,6 +447,7 @@ export function MapView() {
         return;
       }
       useGhostStore.getState().setRouteRunning(false);
+      useGhostStore.getState().setRouteDone(true);
       useGhostStore.getState().setRouteProgress(0);
       const endName = await reverseGeocode(end);
       useGhostStore.getState().renameCurrentLocation(endName);
@@ -545,7 +546,7 @@ export function MapView() {
       if (useGhostStore.getState().mode === "Route") {
         const currentRoute = useGhostStore.getState().route;
         const travelMode = useGhostStore.getState().routeTravelMode;
-        if (currentRoute.length === 0 || currentRoute.length > 1) {
+        if (currentRoute.length === 0 || (currentRoute.length > 1 && !useGhostStore.getState().routeDone)) {
           stopRouteAnimation();
           useGhostStore.getState().setRoute([]);
           const shouldSnap = travelMode === "Road" && useGhostStore.getState().roadSnapEnabled;
@@ -554,6 +555,24 @@ export function MapView() {
           useGhostStore.getState().setRoute([snappedStart]);
           await setCoords(snappedStart, travelMode === "Boat" ? "Boat Start" : "Route Start");
           useGhostStore.setState({ spoofStatus: "Click destination" });
+          return;
+        }
+        if (useGhostStore.getState().routeDone && currentRoute.length > 1) {
+          stopRouteAnimation();
+          const start = useGhostStore.getState().coords;
+          const shouldSnap = travelMode === "Road" && useGhostStore.getState().roadSnapEnabled;
+          useGhostStore.setState({ routeDone: false, spoofStatus: travelMode === "Boat" ? "Building next boat route..." : shouldSnap ? "Building next road route..." : "Building next route..." });
+          if (travelMode === "Boat") {
+            await prepareBoatRoute(start, next);
+            return;
+          }
+          if (!shouldSnap) {
+            await prepareOffRoadRoute(start, next);
+            return;
+          }
+          const snappedStart = await snapToRoad(start);
+          const snappedEnd = await snapToRoad(next);
+          await prepareDrivingRoute(snappedStart, snappedEnd);
           return;
         }
         const shouldSnap = travelMode === "Road" && useGhostStore.getState().roadSnapEnabled;

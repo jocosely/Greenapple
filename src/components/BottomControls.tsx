@@ -53,6 +53,7 @@ export function BottomControls({ onOpenSettings }: Props) {
   const removeFavoriteSlot = useGhostStore((state) => state.removeFavoriteSlot);
   const route = useGhostStore((state) => state.route);
   const routeRunning = useGhostStore((state) => state.routeRunning);
+  const routeDone = useGhostStore((state) => state.routeDone);
   const routePaused = useGhostStore((state) => state.routePaused);
   const routeProgress = useGhostStore((state) => state.routeProgress);
   const routeStats = useGhostStore((state) => state.routeStats);
@@ -114,6 +115,10 @@ export function BottomControls({ onOpenSettings }: Props) {
         setRoutePaused(!routePaused);
         return;
       }
+      if (routeDone) {
+        useGhostStore.setState({ spoofStatus: "Route done. Click the next destination to continue from here." });
+        return;
+      }
       if (route.length >= 2) {
         updateStats(route);
         setRouteRunning(true);
@@ -158,6 +163,7 @@ export function BottomControls({ onOpenSettings }: Props) {
     }
     if (mode !== "Route") return "Change Location";
     if (routeRunning) return routePaused ? "Resume Route" : "Pause Route";
+    if (routeDone) return "Done";
     if (route.length >= 2) return "Start Route";
     return "Select Route";
   }
@@ -252,6 +258,11 @@ export function BottomControls({ onOpenSettings }: Props) {
 
       {routeToolsVisible && (
         <section className="route-tools-panel ghost-liquid liquid-lens fixed bottom-[108px] left-1/2 z-40 flex w-[min(650px,calc(100vw-220px))] min-w-[560px] -translate-x-1/2 items-center justify-center gap-2 rounded-[24px] border-black/80 bg-black/35 p-2 shadow-[0_18px_44px_rgba(0,0,0,0.4)]">
+          {routeDone && mode === "Route" && (
+            <div className="flex h-9 shrink-0 items-center gap-1.5 rounded-[16px] border border-emerald-300/25 bg-emerald-400/10 px-3 text-[11px] font-extrabold text-emerald-100">
+              Done
+            </div>
+          )}
           <div className="grid shrink-0 grid-cols-2 gap-1 rounded-[19px] bg-black/25 p-1">
             <button className={`flex h-9 w-[74px] items-center justify-center gap-1.5 rounded-[15px] text-[11px] font-extrabold transition ${routeTravelMode === "Road" ? "bg-white/12 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]" : "text-white/55 hover:text-white"}`} onClick={() => changeTravelMode("Road")}>
               <Car size={15} />
