@@ -1,0 +1,81 @@
+{
+  "name": "greenapple",
+  "version": "0.1.0",
+  "description": "Local-first desktop location and route controller for connected developer devices.",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build:web": "tsc && vite build",
+    "build": "npm run build:web",
+    "build:electron": "tsc && vite build && tsc -p electron/tsconfig.json && copy electron\\preload.cjs dist-electron\\preload.cjs",
+    "dist:win": "npm run build:electron && electron-builder --win nsis portable --x64",
+    "preview": "vite preview --host 127.0.0.1",
+    "typecheck": "tsc --noEmit && tsc -p electron/tsconfig.json --noEmit",
+    "build:native": "npm run build:web && dotnet build winhost\\Greenapple.Native.csproj -c Release",
+    "publish:native": "npm run build:web && dotnet publish winhost\\Greenapple.Native.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ..\\..\\outputs\\Greenapple-Native-WebView2"
+  },
+  "build": {
+    "appId": "com.greenapple.desktop",
+    "productName": "Greenapple",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json",
+      "README.md"
+    ],
+    "asar": true,
+    "win": {
+      "icon": "build/greenapple.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Greenapple"
+    }
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron-is-dev": "^3.0.1",
+    "lucide-react": "^0.468.0",
+    "maplibre-gl": "^4.7.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^10.0.3",
+    "electron": "^42.4.0",
+    "electron-builder": "^26.15.2",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "wait-on": "^8.0.1"
+  }
+}
