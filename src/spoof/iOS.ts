@@ -14,8 +14,8 @@ export async function spoofIOSLocation(target: SpoofTarget): Promise<void> {
     return;
   }
 
-  // Browser preview fallback. The Electron desktop app exposes ghostSpoof and
-  // runs pymobiledevice3 from the main process.
+  // Browser fallback. The native desktop app exposes ghostSpoof and runs
+  // pymobiledevice3 from the Windows host process.
   console.info("[Greenapple spoof stub] iOS location target", target);
 }
 

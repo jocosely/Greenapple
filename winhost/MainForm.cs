@@ -43,17 +43,50 @@ public sealed class MainForm : Form
         webView.CoreWebView2.WebMessageReceived += async (_, args) => await HandleWebMessage(args.WebMessageAsJson);
         await webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(BridgeScript);
 
-        var distPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "dist"));
-        if (!File.Exists(Path.Combine(distPath, "index.html")))
-        {
-            distPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "dist"));
-        }
+        var distPath = ExtractBundledUi();
         webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
             "greenapple.local",
             distPath,
             CoreWebView2HostResourceAccessKind.Allow
         );
         webView.CoreWebView2.Navigate("https://greenapple.local/index.html");
+    }
+
+    private static string ExtractBundledUi()
+    {
+        var appDataRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Greenapple",
+            "ui"
+        );
+        var assembly = typeof(MainForm).Assembly;
+        var resourceNames = assembly.GetManifestResourceNames()
+            .Where(name => name.StartsWith("GreenappleUi/", StringComparison.Ordinal))
+            .ToArray();
+
+        if (resourceNames.Length == 0)
+        {
+            return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "dist"));
+        }
+
+        if (Directory.Exists(appDataRoot)) Directory.Delete(appDataRoot, recursive: true);
+        Directory.CreateDirectory(appDataRoot);
+
+        foreach (var resourceName in resourceNames)
+        {
+            var relative = resourceName["GreenappleUi/".Length..]
+                .Replace('/', Path.DirectorySeparatorChar)
+                .Replace('\\', Path.DirectorySeparatorChar);
+            var outputPath = Path.Combine(appDataRoot, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+
+            using var input = assembly.GetManifestResourceStream(resourceName);
+            if (input is null) continue;
+            using var output = File.Create(outputPath);
+            input.CopyTo(output);
+        }
+
+        return appDataRoot;
     }
 
     private async Task HandleWebMessage(string json)

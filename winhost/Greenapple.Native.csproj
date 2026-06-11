@@ -18,10 +18,8 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3124.44" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="..\dist\**\*">
-      <Link>dist\%(RecursiveDir)%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
-    </Content>
+    <EmbeddedResource Include="..\dist\**\*">
+      <LogicalName>GreenappleUi/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 </Project>

@@ -6,7 +6,7 @@
   <img src="public/logo.png" alt="Greenapple" width="160" />
 </p>
 
-Greenapple is a desktop map tool for testing location changes and route movement on connected developer devices. It has a dark map UI, saved places, route playback, patrol routes, and a native Windows WebView2 build.
+Greenapple is a native Windows map tool for testing location changes and route movement on connected developer devices. It has a dark map UI, saved places, route playback, patrol routes, and a WebView2 desktop shell.
 
 No accounts. No subscriptions. No telemetry.
 
@@ -44,7 +44,6 @@ Main features:
 
 - React
 - TypeScript
-- Vite
 - Tailwind CSS
 - MapLibre GL
 - Zustand
@@ -103,10 +102,10 @@ Settings are stored on the computer running the app. Greenapple is built to stay
 
 ### Native Windows build
 
-Greenapple can run as a native Windows WebView2 app. The release build ships as a single `.exe` with the web UI bundled inside it.
+Greenapple runs as a native Windows WebView2 app. The release build ships as a `.exe` with the UI bundled into the app package.
 
-- No browser tab required for the packaged app.
-- Uses the same interface as the local development build.
+- No browser tab or localhost UI is required for the packaged app.
+- The native app loads the bundled interface directly inside the `.exe` window.
 - Includes the Windows app icon and native window controls.
 
 ### Device tooling hooks
@@ -122,7 +121,7 @@ The desktop bridge is set up for local developer-device tooling. Python command 
 
 ## Getting Started
 
-These steps run Greenapple locally from source.
+These steps build the native Windows app from source.
 
 ### Prerequisites
 
@@ -147,28 +146,22 @@ Install packages:
 npm install
 ```
 
-Run the local UI:
-
-```powershell
-npm run dev
-```
-
-Build the web app:
-
-```powershell
-npm run build
-```
-
 Build the native Windows app:
 
 ```powershell
-npm run publish:native
+npm run build
 ```
 
 The native build is written to:
 
 ```text
 ../../outputs/Greenapple-Native-WebView2
+```
+
+Open the app by running:
+
+```powershell
+..\..\outputs\Greenapple-Native-WebView2\Greenapple.exe
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
