@@ -164,7 +164,7 @@ Distributed under the MIT License. See [LICENSE](LICENSE) for more information.
 
 ## Contact
 
-Jocosely - [https://github.com/jocosely](https://github.com/jocosely)
+Discord - `hidings.`
 
 Project Link: [https://github.com/jocosely/Greenapple](https://github.com/jocosely/Greenapple)
 
