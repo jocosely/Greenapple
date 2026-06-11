@@ -10,10 +10,15 @@ Greenapple is a desktop map tool for testing location changes and route movement
 
 No accounts. No subscriptions. No telemetry.
 
+<p align="center">
+  <img src="docs/greenapple-screenshot.png" alt="Greenapple desktop map interface" width="900" />
+</p>
+
 ## Table of Contents
 
 - [About The Project](#about-the-project)
   - [Built With](#built-with)
+- [Features](#features)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
@@ -51,6 +56,38 @@ Main features:
 - Zustand
 - .NET Windows Forms
 - WebView2
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Features
+
+### Static location
+
+Static mode is for holding one selected location. Pick a place on the map, search for an address, or drag/select a point, then apply it as the active location. The current place name and marker stay visible on the map so it is easy to see what is being used.
+
+### Route playback
+
+Route mode lets you choose a start point and destination, preview the route, and move along it at a selected speed. Road mode is designed to follow real driving routes where routing data is available, while boat mode allows direct water/off-road movement.
+
+### Patrol routes
+
+Patrol mode is for multiple-point movement. Add several stops and Greenapple can use them as a loop, which is useful for repeated testing routes instead of manually picking the same places again.
+
+### Saved and recent places
+
+Saved places keep important locations easy to reuse. Recent places make it quicker to jump back to the last spots used during testing without searching again.
+
+### Local settings
+
+The app keeps settings on the computer running it. Theme colors, route controls, speed preferences, and saved places are handled locally.
+
+### Native Windows build
+
+Greenapple can run as a native Windows WebView2 app. The release build ships as a single `.exe` with the web UI bundled inside it.
+
+### Device tooling hooks
+
+The desktop bridge is set up for local developer-device tooling. Python command paths can be configured through environment variables, and device logs or local virtual environments are not meant to be committed.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

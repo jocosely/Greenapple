@@ -83,6 +83,15 @@ function routeData(route: [number, number][]): GeoJSON.Feature<GeoJSON.LineStrin
   };
 }
 
+function getGeoJsonSource(instance: Map | null, sourceId: string) {
+  if (!instance) return undefined;
+  try {
+    return instance.getSource(sourceId) as GeoJSONSource | undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function fitMiniMapRoute(instance: Map, points: [number, number][]) {
   if (points.length < 2) return;
   const bounds = points.reduce(
@@ -594,7 +603,10 @@ export function MapView() {
     return () => {
       stopRouteAnimation();
       miniMap.current?.remove();
+      miniMap.current = null;
       instance.remove();
+      if (map.current === instance) map.current = null;
+      if (window.ghostMap === instance) window.ghostMap = undefined;
     };
   }, []);
 
@@ -665,9 +677,9 @@ export function MapView() {
       miniMap.current = null;
     }
     if (route.length === 0) stopRouteAnimation();
-    const source = map.current?.getSource("ghost-route") as GeoJSONSource | undefined;
+    const source = getGeoJsonSource(map.current, "ghost-route");
     source?.setData(routeData(route));
-    const miniSource = miniMap.current?.getSource("ghost-mini-route") as GeoJSONSource | undefined;
+    const miniSource = getGeoJsonSource(miniMap.current, "ghost-mini-route");
     miniSource?.setData(routeData(route));
     if (route.length >= 2 && miniMap.current) fitMiniMapRoute(miniMap.current, route);
   }, [route]);
@@ -683,7 +695,7 @@ export function MapView() {
   useEffect(() => {
     if (mode === "Route" && route.length > 0 && !routeRunning) {
       useGhostStore.getState().setRoute([]);
-      const source = map.current?.getSource("ghost-route") as GeoJSONSource | undefined;
+      const source = getGeoJsonSource(map.current, "ghost-route");
       source?.setData(routeData([]));
     }
   }, [routeTravelMode]);
@@ -692,7 +704,7 @@ export function MapView() {
     if (mode !== "Route" && mode !== "Patrol") {
       stopRouteAnimation();
       useGhostStore.getState().setRouteRunning(false);
-      const source = map.current?.getSource("ghost-route") as GeoJSONSource | undefined;
+      const source = getGeoJsonSource(map.current, "ghost-route");
       source?.setData(routeData([]));
     }
   }, [mode]);
@@ -701,7 +713,7 @@ export function MapView() {
     if (mode !== "Patrol") return;
     const displayRoute =
       patrolPoints.length > 2 ? [...patrolPoints, patrolPoints[0]] : patrolPoints.length === 2 ? patrolPoints : [];
-    const source = map.current?.getSource("ghost-route") as GeoJSONSource | undefined;
+    const source = getGeoJsonSource(map.current, "ghost-route");
     source?.setData(routeData(displayRoute));
     if (!patrolRunning) useGhostStore.getState().setRoute(displayRoute);
   }, [patrolPoints, mode, patrolRunning]);
