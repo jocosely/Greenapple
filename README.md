@@ -63,31 +63,66 @@ Main features:
 
 ### Static location
 
-Static mode is for holding one selected location. Pick a place on the map, search for an address, or drag/select a point, then apply it as the active location. The current place name and marker stay visible on the map so it is easy to see what is being used.
+Static mode is for holding one selected location during testing. You can click the map, search for a place, or move the marker and keep that point active.
+
+- Shows the selected place name on the map.
+- Keeps the marker visible while you work.
+- Saves recent places locally for quick reuse.
+- Includes optional small GPS drift for more natural movement tests.
 
 ### Route playback
 
-Route mode lets you choose a start point and destination, preview the route, and move along it at a selected speed. Road mode is designed to follow real driving routes where routing data is available, while boat mode allows direct water/off-road movement.
+Route mode is for testing movement between two points. Pick a start, pick a destination, preview the path, then start the route.
+
+- Road mode follows routed driving paths when route data is available.
+- Boat mode allows direct water or off-road movement.
+- Speed can be adjusted before or during movement.
+- Route progress, distance, and estimated timing are shown in the controls.
+- Routes can pause, resume, stop, or hold at the destination.
 
 ### Patrol routes
 
-Patrol mode is for multiple-point movement. Add several stops and Greenapple can use them as a loop, which is useful for repeated testing routes instead of manually picking the same places again.
+Patrol mode is for repeated movement across multiple stops. Add points in order and Greenapple can loop through them for longer tests.
+
+- Useful for repeated location checks.
+- Supports multi-stop paths instead of only point-to-point movement.
+- Can loop back to the first point.
+- Keeps the route visible while editing.
 
 ### Saved and recent places
 
-Saved places keep important locations easy to reuse. Recent places make it quicker to jump back to the last spots used during testing without searching again.
+Saved and recent places reduce repeat setup. Locations are kept locally so common test spots are easy to open again.
+
+- Bookmark important locations.
+- Open recent test locations quickly.
+- Keep favorite spots separate from temporary route points.
+- No account or cloud sync is required.
 
 ### Local settings
 
-The app keeps settings on the computer running it. Theme colors, route controls, speed preferences, and saved places are handled locally.
+Settings are stored on the computer running the app. Greenapple is built to stay local-first and avoid account-based setup.
+
+- Theme colors can be adjusted.
+- Device display name can be changed.
+- Route speed preferences are kept locally.
+- Saved places and app preferences stay on the machine.
 
 ### Native Windows build
 
 Greenapple can run as a native Windows WebView2 app. The release build ships as a single `.exe` with the web UI bundled inside it.
 
+- No browser tab required for the packaged app.
+- Uses the same interface as the local development build.
+- Includes the Windows app icon and native window controls.
+
 ### Device tooling hooks
 
 The desktop bridge is set up for local developer-device tooling. Python command paths can be configured through environment variables, and device logs or local virtual environments are not meant to be committed.
+
+- Local command hooks are kept separate from the UI.
+- Python paths can be configured per machine.
+- Build output does not include local virtual environments.
+- Privacy notes are documented in [PRIVACY.md](PRIVACY.md).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

@@ -502,6 +502,7 @@ export function MapView() {
       pitch: 45,
       bearing: 0,
       maxPitch: 65,
+      renderWorldCopies: false,
       attributionControl: false
     });
 
@@ -618,6 +619,7 @@ export function MapView() {
       style: CARTO_DARK_STYLE,
       center: coords,
       zoom: 8,
+      renderWorldCopies: false,
       interactive: false,
       attributionControl: false
     });
