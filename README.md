@@ -44,18 +44,6 @@ The native build is written to:
 - Microsoft Edge WebView2 Runtime
 - Optional: Python with `pymobiledevice3` for iPhone developer-device workflows
 
-## Map token
-
-A Mapbox token is optional. The app can run without one.
-
-If you want to use one locally, copy `.env.example` to `.env` and set:
-
-```text
-VITE_MAPBOX_TOKEN=
-```
-
-Do not commit `.env`.
-
 ## Device tools
 
 For iPhone workflows, install `pymobiledevice3` yourself and point Greenapple at that Python install:
