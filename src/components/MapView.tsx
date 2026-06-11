@@ -147,32 +147,10 @@ function pointAtDistance(points: [number, number][], targetMeters: number): [num
 
 type DrivingRoute = {
   coordinates: [number, number][];
-  provider: "Mapbox" | "OSRM";
+  provider: "OSRM";
 };
 
 async function snapToRoad(coords: [number, number]) {
-  try {
-    const token = import.meta.env.VITE_MAPBOX_TOKEN;
-    if (token) {
-      const url = new URL(`https://api.mapbox.com/matching/v5/mapbox/driving/${coords[0]},${coords[1]}`);
-      url.searchParams.set("access_token", token);
-      url.searchParams.set("geometries", "geojson");
-      url.searchParams.set("radiuses", "unlimited");
-      const response = await fetch(url);
-      if (response.ok) {
-        const body = (await response.json()) as {
-          tracepoints?: Array<{
-            location?: [number, number];
-          } | null>;
-        };
-        const snapped = body.tracepoints?.[0]?.location;
-        if (snapped) return snapped;
-      }
-    }
-  } catch {
-    // Try OSRM below.
-  }
-
   try {
     const url = new URL(`https://router.project-osrm.org/nearest/v1/driving/${coords[0]},${coords[1]}`);
     url.searchParams.set("number", "1");
@@ -190,31 +168,6 @@ async function snapToRoad(coords: [number, number]) {
   } catch {
     return coords;
   }
-}
-
-async function fetchMapboxDrivingRoute(start: [number, number], end: [number, number]): Promise<DrivingRoute | null> {
-  const token = import.meta.env.VITE_MAPBOX_TOKEN;
-  if (!token) return null;
-
-  const url = new URL(`https://api.mapbox.com/directions/v5/mapbox/driving/${start[0]},${start[1]};${end[0]},${end[1]}`);
-  url.searchParams.set("access_token", token);
-  url.searchParams.set("geometries", "geojson");
-  url.searchParams.set("overview", "full");
-  url.searchParams.set("alternatives", "false");
-  url.searchParams.set("steps", "false");
-  url.searchParams.set("radiuses", "unlimited;unlimited");
-
-  const response = await fetch(url);
-  if (!response.ok) return null;
-  const body = (await response.json()) as {
-    routes?: Array<{
-      geometry?: {
-        coordinates?: [number, number][];
-      };
-    }>;
-  };
-  const coordinates = body.routes?.[0]?.geometry?.coordinates;
-  return coordinates && coordinates.length >= 2 ? { coordinates, provider: "Mapbox" } : null;
 }
 
 async function fetchOsrmDrivingRoute(start: [number, number], end: [number, number]): Promise<DrivingRoute | null> {
@@ -240,13 +193,6 @@ async function fetchOsrmDrivingRoute(start: [number, number], end: [number, numb
 }
 
 async function fetchDrivingRoute(start: [number, number], end: [number, number]) {
-  try {
-    const mapboxRoute = await fetchMapboxDrivingRoute(start, end);
-    if (mapboxRoute) return mapboxRoute;
-  } catch {
-    // Try the no-token road router below.
-  }
-
   try {
     const osrmRoute = await fetchOsrmDrivingRoute(start, end);
     if (osrmRoute) return osrmRoute;

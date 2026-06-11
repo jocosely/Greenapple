@@ -16,7 +16,6 @@ The map UI can make requests to map providers when you use the map, search, or r
 
 - OpenStreetMap/CARTO tiles for the default map.
 - Nominatim/OSRM-style public services if configured by the app code for search or routing.
-- Mapbox only if you personally add `VITE_MAPBOX_TOKEN` in your local `.env`.
 
 Those providers may receive map viewport, search text, or route coordinates as part of normal map functionality.
 
@@ -24,7 +23,7 @@ Those providers may receive map viewport, search text, or route coordinates as p
 
 - Do not commit `.env` files.
 - Do not commit personal device logs, screenshots with serial numbers, or local build folders.
-- The repository intentionally does not bundle a Python virtual environment, private keys, or Mapbox token.
+- The repository intentionally does not bundle a Python virtual environment, private keys, or local tokens.
 
 ## Deleting local data
 

@@ -12,7 +12,6 @@ winhost/obj/
 # Local secrets and runtime data
 .env
 .env.*
-!.env.example
 *.log
 *.tmp
 *.user

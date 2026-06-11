@@ -2,7 +2,7 @@ import { Bluetooth, Search } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { GhostMode, useGhostStore } from "../store/useGhostStore";
 
-type MapboxFeature = {
+type SearchFeature = {
   id: string;
   place_name: string;
   center: [number, number];
@@ -49,7 +49,7 @@ export function TopBar() {
   const connectionHealth = useGhostStore((state) => state.connectionHealth);
   const setConnectionHealth = useGhostStore((state) => state.setConnectionHealth);
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<MapboxFeature[]>([]);
+  const [results, setResults] = useState<SearchFeature[]>([]);
   const [bluetoothMessage, setBluetoothMessage] = useState("");
   const timer = useRef<number | null>(null);
   const bluetoothTimer = useRef<number | null>(null);
@@ -64,17 +64,6 @@ export function TopBar() {
       return;
     }
     timer.current = window.setTimeout(async () => {
-      const token = import.meta.env.VITE_MAPBOX_TOKEN;
-      if (token) {
-        const url = new URL(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json`);
-        url.searchParams.set("access_token", token);
-        url.searchParams.set("limit", "5");
-        const response = await fetch(url);
-        const body = (await response.json()) as { features?: MapboxFeature[] };
-        setResults(body.features ?? []);
-        return;
-      }
-
       const url = new URL("https://nominatim.openstreetmap.org/search");
       url.searchParams.set("format", "jsonv2");
       url.searchParams.set("limit", "5");
@@ -140,7 +129,7 @@ export function TopBar() {
     };
   }, [setBluetoothState, setConnectionHealth]);
 
-  async function choose(feature: MapboxFeature) {
+  async function choose(feature: SearchFeature) {
     setQuery(feature.place_name);
     setResults([]);
     if (mode === "Route") {
