@@ -16,13 +16,16 @@ No accounts. No subscriptions. No telemetry.
 
 ## Table of Contents
 
+- [Download](#download)
 - [About The Project](#about-the-project)
-  - [Built With](#built-with)
 - [Features](#features)
-- [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
 - [Contact](#contact)
+
+## Download
+
+[Download Greenapple for Windows](https://github.com/jocosely/Greenapple/releases/download/v0.1.0/Greenapple-v0.1.0.exe)
+
+Open the `.exe` and the full interface runs inside the desktop app. No browser tab, no localhost page, and no account setup.
 
 ## About The Project
 
@@ -37,18 +40,6 @@ Main features:
 - Route speed controls
 - Local app settings
 - Native Windows WebView2 app
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-### Built With
-
-- React
-- TypeScript
-- Tailwind CSS
-- MapLibre GL
-- Zustand
-- .NET Windows Forms
-- WebView2
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -116,53 +107,6 @@ The desktop bridge is set up for local developer-device tooling. Python command 
 - Python paths can be configured per machine.
 - Build output does not include local virtual environments.
 - Privacy notes are documented in [PRIVACY.md](PRIVACY.md).
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## Getting Started
-
-These steps build the native Windows app from source.
-
-### Prerequisites
-
-- Node.js 20+
-- npm
-- .NET 9 SDK
-- Microsoft Edge WebView2 Runtime
-- Optional: Python with `pymobiledevice3` for iPhone developer-device workflows
-
-### Installation
-
-Clone the repo:
-
-```powershell
-git clone https://github.com/jocosely/Greenapple.git
-cd Greenapple
-```
-
-Install packages:
-
-```powershell
-npm install
-```
-
-Build the native Windows app:
-
-```powershell
-npm run build
-```
-
-The native build is written to:
-
-```text
-../../outputs/Greenapple-Native-WebView2
-```
-
-Open the app by running:
-
-```powershell
-..\..\outputs\Greenapple-Native-WebView2\Greenapple.exe
-```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
