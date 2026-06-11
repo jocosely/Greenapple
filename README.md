@@ -2,6 +2,10 @@
 
 # Greenapple
 
+<p align="center">
+  <img src="public/logo.png" alt="Greenapple" width="160" />
+</p>
+
 Greenapple is a desktop map tool for testing location changes and route movement on connected developer devices. It has a dark map UI, saved places, route playback, patrol routes, and a native Windows WebView2 build.
 
 No accounts. No subscriptions. No telemetry.
